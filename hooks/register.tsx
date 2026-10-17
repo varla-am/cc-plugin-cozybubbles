@@ -1,4 +1,10 @@
-import type { Register, RenderInput } from 'claude-code'
+import { atom, read, update } from 'claude-code'
+import type { Register, RenderChildren, RenderInput } from 'claude-code'
+
+import type { Queued } from '../types'
+
+// Промпты, набранные пока идёт ход: ждут в очереди, рисуются бубликами над статус-баром.
+const queued = atom({ plugin: 'cozy-bubbles', key: 'queued' } as const, [] as Queued[])
 
 // Палитра рамок — меняется в одну строку.
 const CLAUDE_ACCENT = '#43D9C7' // рамка сообщений Claude
@@ -10,6 +16,7 @@ const SERVICE_ACCENT = '#5A6472' // служебные бублики (Worked fo
 const ICON_CLAUDE = '✳'
 const ICON_USER = '◆'
 const ICON_CLIENT = '⚙︎'
+const ICON_QUEUED = '◇'
 
 // Цвета статусбара (как в statusline-context.py, в hex-эквивалентах xterm-256).
 const GREEN = '#00ff00' // 46
@@ -18,10 +25,26 @@ const RED = '#ff0000' // 196
 const BLUE = '#00afff' // 39
 const ORANGE = '#ff8700' // 208
 
-// Ширина бублика: по ширине терминала, но не шире 108 колонок — так читабельнее.
-function bubbleWidth(e: RenderInput): number {
+// Ширина бублика: обычный текст переносится ~108 колонок (так читабельнее), но под
+// широкий контент — таблицы и блоки кода — бублик растягивается вплоть до ширины
+// терминала, чтобы ничего не ломало рамку. Ширину берём по самой широкой "жёсткой"
+// строке (таблица/код), прозу не считаем — она и так переносится.
+function bubbleWidth(e: RenderInput, text?: string): number {
   const cols = e.viewport?.columns ?? 80
-  return Math.max(24, Math.min(cols - 2, 108))
+  const maxW = Math.max(24, cols - 2)
+  const prose = Math.min(108, maxW)
+  if (!text) return prose
+  let wide = 0
+  let inFence = false
+  for (const line of text.split('\n')) {
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence
+      wide = Math.max(wide, line.length)
+      continue
+    }
+    if (inFence || line.includes('|')) wide = Math.max(wide, line.length)
+  }
+  return Math.min(maxW, Math.max(prose, wide + 6))
 }
 
 // Группировка числа пробелами-запятыми: 132509 -> 132,509
@@ -54,7 +77,7 @@ function prettyModel(id: string): string {
   const ver = id.match(/(\d+)[-.](\d+)/)
   const version = ver ? `${ver[1]}.${ver[2]}` : ''
   if (fam) {
-    const name = fam[0].toUpperCase() + fam.slice(1)
+    const name = fam.charAt(0).toUpperCase() + fam.slice(1)
     return version ? `${name} ${version}` : name
   }
   return id
@@ -86,7 +109,61 @@ function resetsLabel(iso?: string): string {
   return `${hh}:${mm}`
 }
 
+// Есть ли текст промпта где-то внутри строки сессии (строка или блоки — сравниваем по JSON,
+// так кавычки и переносы экранированы одинаково с обеих сторон).
+function mentions(content: unknown, text: string): boolean {
+  const needle = JSON.stringify(text).slice(1, -1)
+  return needle.length > 0 && JSON.stringify(content ?? '').includes(needle)
+}
+
 export const register: Register = on => {
+  // ── Очередь: Enter посреди хода кладёт промпт в очередь ─────────────────
+  on('prompt.submit', async ($, e, next) => {
+    const result = await next(e)
+    const text = e.text.trim()
+    if (e.origin.kind !== 'composer' || !text || text.startsWith('/')) return result
+    if (e.turnId) {
+      await update($, queued, q => [...(q ?? []), { text }])
+    } else {
+      // Промпт ушёл сразу — значит ничего не ждёт, чистим хвосты.
+      await update($, queued, () => [])
+    }
+    return result
+  }).catch(($, e, next) => next(e)) // сбой очереди не должен ни терять, ни дублировать промпт
+
+  // Движок забрал промпт из очереди: в текущий ход (вложение queued_command)
+  // или новым ходом (строка промпта) — убираем его бублик.
+  on('session.append', async ($, e, next) => {
+    const result = await next(e)
+    const m = e.message
+    const taken = e.door === 'prompt' || (m.type === 'attachment' && m.name === 'queued_command')
+    if (taken && !e.agentId) {
+      await update($, queued, q => {
+        const list = q ?? []
+        const i = list.findIndex(x => mentions(m.content, x.text))
+        return i < 0 ? list : [...list.slice(0, i), ...list.slice(i + 1)]
+      })
+    }
+    return result
+  }).catch(($, e, next) => next(e))
+
+  on('turn.start', async ($, e, next) => {
+    const result = await next(e)
+    const text = e.text.trim()
+    if (!e.agentId && text) {
+      await update($, queued, q => (q ?? []).filter(x => x.text !== text))
+    }
+    return result
+  }).catch(($, e, next) => next(e))
+
+  // Ход закончился: всё, что ждало, либо уже забрано, либо ↑ вернул обратно в поле ввода
+  // (popAll — его не видно ни в одном событии). Чистим, чтобы не висели призраки.
+  on('turn.complete', async ($, e, next) => {
+    const result = await next(e)
+    if (!e.agentId) await update($, queued, () => [])
+    return result
+  }).catch(($, e, next) => next(e))
+
   // ── Скруглённая рамка вокруг сообщений Claude ───────────────────────────
   on('ui.render', { component: 'AssistantMessage' }, ($, e, next) => {
     const text = e.props.text
@@ -97,7 +174,7 @@ export const register: Register = on => {
     const { Box, Text, Markdown } = $.ui.resolve(e)
 
     return (
-      <Box flexDirection="column" marginTop={1} width={bubbleWidth(e)}>
+      <Box flexDirection="column" marginTop={1} width={bubbleWidth(e, text)}>
         {e.props.isFirstOfReply ? (
           <Text color={CLAUDE_ACCENT} bold>
             {` ${ICON_CLAUDE} Claude`}
@@ -111,7 +188,7 @@ export const register: Register = on => {
   })
 
   // ── Скруглённая рамка вокруг твоих сообщений ────────────────────────────
-  on('ui.render', { component: 'UserMessage' }, ($, e, next) => {
+  on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
     if (e.props.origin.kind !== 'composer') {
       return next(e)
     }
@@ -122,8 +199,15 @@ export const register: Register = on => {
 
     const { Box, Text, Markdown } = $.ui.resolve(e)
 
+    // Превью сообщения в очереди: его уже показывает бублик ◇ queued внизу, дубль прячем.
+    // Когда движок заберёт сообщение, очередь опустеет и строка перерисуется бубликом.
+    const waiting = (await read($, queued)) ?? []
+    if (waiting.some(q => q.text === text.trim())) {
+      return <Box />
+    }
+
     return (
-      <Box flexDirection="column" marginTop={1} width={bubbleWidth(e)}>
+      <Box flexDirection="column" marginTop={1} width={bubbleWidth(e, text)}>
         <Text color={USER_ACCENT} bold>
           {` ${ICON_USER} user`}
         </Text>
@@ -209,7 +293,7 @@ export const register: Register = on => {
     }
 
     // Собираем строку статусбара сегментами (как " | " в statusline).
-    const row: unknown[] = []
+    const row: RenderChildren[] = []
     const sep = (k: string) => row.push(<Text key={k}> | </Text>)
 
     if (modelId) {
@@ -250,11 +334,36 @@ export const register: Register = on => {
       row.push(<Text key="idle">готов печатать</Text>)
     }
 
+    // Очередь справа: по строке на сообщение, переносы схлопнуты, длинное обрезается «…».
+    // Стопка растёт вверх: первое в очереди — внизу, у строки статуса; новые ложатся сверху.
+    const waiting = (await read($, queued)) ?? []
+    const queue = waiting
+      .map((q, i) => (
+        <Text key={`q${i}`} color={USER_ACCENT} wrap="truncate-end">
+          {`${ICON_QUEUED} ${waiting.length > 1 ? `${i + 1}/${waiting.length}` : 'queued'} · ${q.text.replace(/\s*\n\s*/g, ' ⏎ ')}`}
+        </Text>
+      ))
+      .reverse()
+
+    // Статус-панель на всю ширину (одна строка, текст слева). Очередь — отдельный бублик
+    // справа; оба прижаты к низу, поэтому вверх растёт только бублик очереди.
     return (
-      <Box flexGrow={1} justifyContent="flex-end">
-        <Box borderStyle="round" borderColor={CLOUD_ACCENT} paddingX={2} marginRight={1}>
+      <Box flexGrow={1} alignItems="flex-end" marginRight={1}>
+        <Box flexGrow={1} flexShrink={0} borderStyle="round" borderColor={CLOUD_ACCENT} paddingX={2}>
           {row}
         </Box>
+        {queue.length ? (
+          <Box
+            flexDirection="column"
+            flexShrink={1}
+            marginLeft={1}
+            borderStyle="round"
+            borderColor={USER_ACCENT}
+            paddingX={1}
+          >
+            {queue}
+          </Box>
+        ) : null}
       </Box>
     )
   })
