@@ -11,6 +11,8 @@ const CLAUDE_ACCENT = '#43D9C7' // рамка сообщений Claude
 const USER_ACCENT = '#8A7FF0' // рамка твоих сообщений
 const CLOUD_ACCENT = '#43D9C7' // рамка статус-бублика
 const SERVICE_ACCENT = '#5A6472' // служебные бублики (Worked for…, Ran … shell)
+const CODE_BORDER = '#3A404B' // рамка блока кода
+const CODE_BG = '#16181D' // фон блока кода: чуть темнее тёмного терминала
 
 // Иконки подписей (текстовые глифы, не эмодзи; у шестерёнки VS15 — текстовый стиль).
 const ICON_CLAUDE = '✳'
@@ -45,6 +47,47 @@ function bubbleWidth(e: RenderInput, text?: string): number {
     if (inFence || line.includes('|')) wide = Math.max(wide, line.length)
   }
   return Math.min(maxW, Math.max(prose, wide + 6))
+}
+
+// Ответ Claude, разрезанный на куски: обычный markdown и блоки кода ```lang … ```.
+// Незакрытый блок (ответ ещё печатается) — тоже код, до конца текста.
+type Segment = { kind: 'md'; text: string } | { kind: 'code'; lang: string; source: string }
+
+function splitFences(text: string): Segment[] {
+  const out: Segment[] = []
+  let prose: string[] = []
+  let code: string[] | null = null
+  let fence = ''
+  let lang = ''
+  const flushProse = () => {
+    if (prose.join('').trim()) out.push({ kind: 'md', text: prose.join('\n') })
+    prose = []
+  }
+  for (const line of text.split('\n')) {
+    if (code) {
+      // Закрывает такой же забор, не короче открывающего
+      const close = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/)?.[1]
+      if (close && close[0] === fence[0] && close.length >= fence.length) {
+        out.push({ kind: 'code', lang, source: code.join('\n') })
+        code = null
+      } else {
+        code.push(line)
+      }
+      continue
+    }
+    const open = line.match(/^ {0,3}(`{3,}|~{3,})\s*([^`\s]*)/)
+    if (open) {
+      flushProse()
+      fence = open[1] ?? '```'
+      lang = open[2] ?? ''
+      code = []
+    } else {
+      prose.push(line)
+    }
+  }
+  if (code) out.push({ kind: 'code', lang, source: code.join('\n') })
+  flushProse()
+  return out
 }
 
 // Группировка числа пробелами-запятыми: 132509 -> 132,509
@@ -171,7 +214,40 @@ export const register: Register = on => {
       return next(e)
     }
 
-    const { Box, Text, Markdown } = $.ui.resolve(e)
+    const { Box, Text, Markdown, Code, Button } = $.ui.resolve(e)
+
+    // Блок кода — свой бублик внутри бублика, как в Claude Desktop:
+    // фон потемнее, сверху язык и кнопка «Copy».
+    const body = splitFences(text).map((s, i) =>
+      s.kind === 'md' ? (
+        <Markdown key={`md${i}`} text={s.text} />
+      ) : (
+        <Box
+          key={`code${i}`}
+          flexDirection="column"
+          marginY={1}
+          borderStyle="round"
+          borderColor={CODE_BORDER}
+          backgroundColor={CODE_BG}
+          paddingX={1}
+        >
+          <Box justifyContent="space-between">
+            <Text dimColor>{s.lang || 'code'}</Text>
+            <Button
+              key={`copy${i}`}
+              plain
+              dimColor
+              label="⧉ Copy"
+              onPress={async press => {
+                const r = await $.ui.copy({ text: s.source, surface: press.surface })
+                $.ui.toast(r.isCopied ? 'Код скопирован' : 'Не удалось скопировать')
+              }}
+            />
+          </Box>
+          <Code source={s.source || ' '} language={s.lang || undefined} />
+        </Box>
+      ),
+    )
 
     return (
       <Box flexDirection="column" marginTop={1} width={bubbleWidth(e, text)}>
@@ -180,8 +256,8 @@ export const register: Register = on => {
             {` ${ICON_CLAUDE} Claude`}
           </Text>
         ) : null}
-        <Box borderStyle="round" borderColor={CLAUDE_ACCENT} paddingX={1}>
-          <Markdown text={text} />
+        <Box flexDirection="column" borderStyle="round" borderColor={CLAUDE_ACCENT} paddingX={1}>
+          {body}
         </Box>
       </Box>
     )

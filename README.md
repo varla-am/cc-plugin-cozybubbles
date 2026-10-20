@@ -12,6 +12,10 @@
   (фиолетовый). Текст рендерится через `Markdown`, с ровными отступами. Обычный текст
   переносится по ~108 колонок, а под широкие таблицы и блоки кода бублик растягивается
   вплоть до ширины терминала, так что рамка не ломается.
+- **Блоки кода как в Claude Desktop.** Каждый ` ``` `-блок в ответе Claude рисуется
+  отдельным бубликом внутри сообщения: фон чуть темнее, сверху язык и кнопка
+  **⧉ Copy**, которая кладёт код в буфер обмена (`$.ui.copy`). Подсветка синтаксиса —
+  движка Claude Code (элемент `Code`).
 - **Служебные бублики.** `Worked for …` (`TurnDuration`) и `Ran … calls` (`ToolGroup`)
   уезжают в свой серый бублик `⚙ Client`.
 - **Очередь промптов.** Сообщения, отправленные, пока Claude ещё работает, показываются
@@ -47,7 +51,7 @@ claude plugin install cozy-bubbles --marketplace varla-am/cc-plugin-cozybubbles
 ## Настройка
 
 Палитра задаётся константами в начале `hooks/register.tsx` (`CLAUDE_ACCENT`,
-`USER_ACCENT`, `CLOUD_ACCENT`, `SERVICE_ACCENT`) и иконками (`ICON_CLAUDE`,
+`USER_ACCENT`, `CLOUD_ACCENT`, `SERVICE_ACCENT`, `CODE_BORDER`, `CODE_BG`) и иконками (`ICON_CLAUDE`,
 `ICON_USER`, `ICON_CLIENT`). Пороги цветов токенов/лимитов — в функциях
 `tokenColor` и `leftColor`.
 
