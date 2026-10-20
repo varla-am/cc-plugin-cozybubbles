@@ -218,6 +218,11 @@ export const register: Register = on => {
 
     // Блок кода — свой бублик внутри бублика, как в Claude Desktop:
     // фон потемнее, сверху язык и кнопка «Copy».
+    const width = bubbleWidth(e, text)
+    // Линия под шапкой блока — от рамки до рамки: бублик минус рамка+отступы сообщения (4)
+    // и рамка самого блока (2). Отдельной нижней границы у Box нет, поэтому рисуем символами.
+    const rule = '─'.repeat(Math.max(0, width - 6))
+
     const body = splitFences(text).map((s, i) =>
       s.kind === 'md' ? (
         <Markdown key={`md${i}`} text={s.text} />
@@ -229,9 +234,8 @@ export const register: Register = on => {
           borderStyle="round"
           borderColor={CODE_BORDER}
           backgroundColor={CODE_BG}
-          paddingX={1}
         >
-          <Box justifyContent="space-between">
+          <Box justifyContent="space-between" paddingX={1}>
             <Text dimColor>{s.lang || 'code'}</Text>
             <Button
               key={`copy${i}`}
@@ -244,13 +248,18 @@ export const register: Register = on => {
               }}
             />
           </Box>
-          <Code source={s.source || ' '} language={s.lang || undefined} />
+          <Text color={CODE_BORDER} wrap="truncate-end">
+            {rule}
+          </Text>
+          <Box paddingX={1}>
+            <Code source={s.source || ' '} language={s.lang || undefined} />
+          </Box>
         </Box>
       ),
     )
 
     return (
-      <Box flexDirection="column" marginTop={1} width={bubbleWidth(e, text)}>
+      <Box flexDirection="column" marginTop={1} width={width}>
         {e.props.isFirstOfReply ? (
           <Text color={CLAUDE_ACCENT} bold>
             {` ${ICON_CLAUDE} Claude`}
