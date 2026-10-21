@@ -1,7 +1,7 @@
 {
   "name": "cozy-bubbles",
   "version": "0.4.0",
-  "description": "Скруглённые рамки на сообщениях, цветной статус-бар и очередь промптов в бубликах",
+  "description": "Rounded borders around messages, a colourful status bar and a prompt queue in bubbles",
   "author": { "name": "Varlaam" },
   "types": "./types/index.d.ts"
 }

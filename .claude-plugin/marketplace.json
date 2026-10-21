@@ -2,7 +2,7 @@
   "name": "cozybubbles",
   "owner": { "name": "Varlaam" },
   "metadata": {
-    "description": "Мод интерфейса Claude Code: скруглённые бублики на сообщениях и цветной статус-бар"
+    "description": "A Claude Code interface mod: rounded bubbles around messages and a colourful status bar"
   },
   "plugins": [{ "name": "cozy-bubbles", "source": "./" }]
 }

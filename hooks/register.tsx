@@ -3,38 +3,38 @@ import type { Hook, Register, RenderChildren, RenderInput } from 'claude-code'
 
 import type { Queued } from '../types'
 
-// Движок ($) так, как его получает хук ui.render
+// The engine ($) as a ui.render hook receives it
 type Engine = Parameters<Hook<'ui.render'>>[0]
 
-// Промпты, набранные пока идёт ход: ждут в очереди, рисуются бубликами над статус-баром.
+// Prompts typed while a turn is running: they wait in the queue, drawn as bubbles above the status bar.
 const queued = atom({ plugin: 'cozy-bubbles', key: 'queued' } as const, [] as Queued[])
 
-// Палитра рамок — меняется в одну строку.
-const CLAUDE_ACCENT = '#43D9C7' // рамка сообщений Claude
-const USER_ACCENT = '#8A7FF0' // рамка твоих сообщений
-const CLOUD_ACCENT = '#43D9C7' // рамка статус-бублика
-const SERVICE_ACCENT = '#5A6472' // служебные бублики (Worked for…, Ran … shell)
-const CODE_BORDER = '#3A404B' // рамка блока кода
-const CODE_BG = '#16181D' // фон блока кода: чуть темнее тёмного терминала
-const IMAGE_ACCENT = '#F0A6CA' // [Image #N] в твоих сообщениях: нажал — открылась картинка
+// Border palette: one line per colour.
+const CLAUDE_ACCENT = '#43D9C7' // Claude's message border
+const USER_ACCENT = '#8A7FF0' // your message border
+const CLOUD_ACCENT = '#43D9C7' // status bubble border
+const SERVICE_ACCENT = '#5A6472' // service bubbles (Worked for…, Ran … shell)
+const CODE_BORDER = '#3A404B' // code block border
+const CODE_BG = '#16181D' // code block background: a little darker than a dark terminal
+const IMAGE_ACCENT = '#F0A6CA' // [Image #N] in your messages: press it to open the image
 
-// Иконки подписей (текстовые глифы, не эмодзи; у шестерёнки VS15 — текстовый стиль).
+// Label icons (text glyphs, not emoji; the gear carries VS15 for text style).
 const ICON_CLAUDE = '✳'
 const ICON_USER = '◆'
 const ICON_CLIENT = '⚙︎'
 const ICON_QUEUED = '◇'
 
-// Цвета статусбара (как в statusline-context.py, в hex-эквивалентах xterm-256).
+// Status bar colours (as in statusline-context.py, as hex equivalents of xterm-256).
 const GREEN = '#00ff00' // 46
 const YELLOW = '#ffff00' // 226
 const RED = '#ff0000' // 196
 const BLUE = '#00afff' // 39
 const ORANGE = '#ff8700' // 208
 
-// Ширина бублика: обычный текст переносится ~108 колонок (так читабельнее), но под
-// широкий контент — таблицы и блоки кода — бублик растягивается вплоть до ширины
-// терминала, чтобы ничего не ломало рамку. Ширину берём по самой широкой "жёсткой"
-// строке (таблица/код), прозу не считаем — она и так переносится.
+// Bubble width: prose wraps at ~108 columns (easier to read), but for
+// wide content (tables and code blocks) the bubble grows up to the width of
+// the terminal, so nothing breaks the border. The width comes from the widest "rigid"
+// line (table/code); prose doesn't count, it wraps anyway.
 function bubbleWidth(e: RenderInput, text?: string): number {
   const cols = e.viewport?.columns ?? 80
   const maxW = Math.max(24, cols - 2)
@@ -53,8 +53,8 @@ function bubbleWidth(e: RenderInput, text?: string): number {
   return Math.min(maxW, Math.max(prose, wide + 6))
 }
 
-// Ответ Claude, разрезанный на куски: обычный markdown и блоки кода ```lang … ```.
-// Незакрытый блок (ответ ещё печатается) — тоже код, до конца текста.
+// A message cut into pieces: plain markdown and ```lang … ``` code blocks.
+// An unclosed block (the reply is still streaming) is code too, up to the end of the text.
 type Segment = { kind: 'md'; text: string } | { kind: 'code'; lang: string; source: string }
 
 function splitFences(text: string): Segment[] {
@@ -69,7 +69,7 @@ function splitFences(text: string): Segment[] {
   }
   for (const line of text.split('\n')) {
     if (code) {
-      // Закрывает такой же забор, не короче открывающего
+      // Closed by the same kind of fence, no shorter than the opening one
       const close = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/)?.[1]
       if (close && close[0] === fence[0] && close.length >= fence.length) {
         out.push({ kind: 'code', lang, source: code.join('\n') })
@@ -94,14 +94,14 @@ function splitFences(text: string): Segment[] {
   return out
 }
 
-// Группировка числа пробелами-запятыми: 132509 -> 132,509
+// Thousands separators: 132509 -> 132,509
 function groupThousands(n: number): string {
   return Math.round(n)
     .toString()
     .replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 }
 
-// 89000 -> "1m 29s" ; 39000 -> "39s" (как формат движка)
+// 89000 -> "1m 29s" ; 39000 -> "39s" (the engine's format)
 function fmtDuration(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000))
   const h = Math.floor(s / 3600)
@@ -112,7 +112,7 @@ function fmtDuration(ms: number): string {
   return `${sec}s`
 }
 
-// Текущее локальное время как HH:MM
+// The current local time as HH:MM
 function clockLabel(): string {
   const d = new Date()
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -156,29 +156,29 @@ function resetsLabel(iso?: string): string {
   return `${hh}:${mm}`
 }
 
-// Есть ли текст промпта где-то внутри строки сессии (строка или блоки — сравниваем по JSON,
-// так кавычки и переносы экранированы одинаково с обеих сторон).
+// Whether the prompt's text is somewhere in a session row (a string or blocks; compared as JSON,
+// so quotes and newlines are escaped the same way on both sides).
 function mentions(content: unknown, text: string): boolean {
   const needle = JSON.stringify(text).slice(1, -1)
   return needle.length > 0 && JSON.stringify(content ?? '').includes(needle)
 }
 
-// Плейсхолдер вставленной картинки в твоём сообщении: [Image #57]
+// The placeholder of a pasted image in your message: [Image #57]
 const IMAGE_REF = /\[Image #(\d+)\]/g
 
-// Где лежит картинка #N: движок пишет её путь в историю как [Image: source: …/images/57.png].
-// После /compact старые строки уходят в сводку — тогда ищем N.png в той же папке, что и любая другая.
+// Where image #N is: the engine records its path in the history as [Image: source: …/images/57.png].
+// After /compact old rows go into the summary; then look for N.png in the same folder as any other.
 async function imagePath($: Engine, n: string): Promise<string | undefined> {
   const history = JSON.stringify(await $.session.messages({ as: 'api' }))
   const paths = [...history.matchAll(/\[Image: source: ([^\]"]+?\.\w+)\]/g)].map(m => m[1] ?? '')
   const exact = paths.find(p => new RegExp(`[/\\\\]${n}\\.\\w+$`).test(p))
   if (exact) return exact
-  // Только папка вставленных картинок (…/images/), не файл, перетащенный из другой программы
+  // Only the pasted images folder (…/images/), not a file dragged in from another app
   const dir = paths.find(p => /[/\\]images[/\\][^/\\]+$/.test(p))?.replace(/[/\\][^/\\]+$/, '')
   return dir ? `${dir}/${n}.png` : undefined
 }
 
-// Открыть файл программой по умолчанию: Просмотр на macOS, xdg-open на Linux, start на Windows
+// Open a file with the default app: Preview on macOS, xdg-open on Linux, start on Windows
 async function openFile($: Engine, path: string): Promise<boolean> {
   const uname = await $.process.run(['uname']).catch(() => undefined)
   const argv = !uname
@@ -193,14 +193,14 @@ async function openFile($: Engine, path: string): Promise<boolean> {
 async function openImage($: Engine, n: string) {
   const path = await imagePath($, n)
   if (!path || !(await $.fs.exists(path))) {
-    $.ui.toast(`Картинки #${n} уже нет: временные файлы стираются при перезагрузке`)
+    $.ui.toast(`Image #${n} is gone: temporary files are cleared on restart`)
     return
   }
-  if (!(await openFile($, path))) $.ui.toast(`Не удалось открыть ${path}`)
+  if (!(await openFile($, path))) $.ui.toast(`Couldn't open ${path}`)
 }
 
-// Markdown, в котором строки с [Image #N] собраны из текста и кнопок: нажал — картинка открылась.
-// Такие строки рисуются без markdown-разметки; обычно в них и нет ничего, кроме слов.
+// Markdown where lines with [Image #N] are built from text and buttons: press one to open the image.
+// Such lines are drawn without markdown formatting; usually they hold nothing but words anyway.
 function markdownWithImages($: Engine, e: RenderInput, text: string, key: string) {
   const { Box, Text, Markdown, Button } = $.ui.resolve(e)
   const out: RenderChildren[] = []
@@ -241,15 +241,15 @@ function markdownWithImages($: Engine, e: RenderInput, text: string, key: string
   return out
 }
 
-// Текст сообщения: markdown, а блоки кода ```lang … ``` — своим бубликом с кнопкой Copy.
-// Общий для сообщений Claude и твоих; в твоих [Image #N] ещё и нажимаются.
+// A message's text: markdown, with ```lang … ``` code blocks in a bubble of their own with a Copy button.
+// Shared by Claude's messages and yours; in yours, [Image #N] can be pressed too.
 function fencedBody($: Engine, e: RenderInput, text: string, width: number, images = false) {
   const { Box, Text, Markdown, Code, Button } = $.ui.resolve(e)
 
-  // Блок кода — свой бублик внутри бублика, как в Claude Desktop:
-  // фон потемнее, сверху язык и кнопка «Copy».
-  // Линия под шапкой блока — от рамки до рамки: бублик минус рамка+отступы сообщения (4)
-  // и рамка самого блока (2). Отдельной нижней границы у Box нет, поэтому рисуем символами.
+  // A code block is a bubble inside the bubble, as in Claude Desktop:
+  // a darker background, the language and a "Copy" button on top.
+  // The rule under the block's header runs border to border: the bubble minus the message's border+padding (4)
+  // and the block's own border (2). Box has no bottom-only border, so it's drawn with characters.
   const rule = '─'.repeat(Math.max(0, width - 6))
 
   return splitFences(text).map((s, i) =>
@@ -279,7 +279,7 @@ function fencedBody($: Engine, e: RenderInput, text: string, width: number, imag
             label="⧉ Copy"
             onPress={async press => {
               const r = await $.ui.copy({ text: s.source, surface: press.surface })
-              $.ui.toast(r.isCopied ? 'Код скопирован' : 'Не удалось скопировать')
+              $.ui.toast(r.isCopied ? 'Code copied' : "Couldn't copy")
             }}
           />
         </Box>
@@ -295,7 +295,7 @@ function fencedBody($: Engine, e: RenderInput, text: string, width: number, imag
 }
 
 export const register: Register = on => {
-  // ── Очередь: Enter посреди хода кладёт промпт в очередь ─────────────────
+  // ── Queue: Enter in the middle of a turn queues the prompt ─────────────────
   on('prompt.submit', async ($, e, next) => {
     const result = await next(e)
     const text = e.text.trim()
@@ -303,14 +303,14 @@ export const register: Register = on => {
     if (e.turnId) {
       await update($, queued, q => [...(q ?? []), { text }])
     } else {
-      // Промпт ушёл сразу — значит ничего не ждёт, чистим хвосты.
+      // The prompt went straight through, so nothing is waiting: clear leftovers.
       await update($, queued, () => [])
     }
     return result
-  }).catch(($, e, next) => next(e)) // сбой очереди не должен ни терять, ни дублировать промпт
+  }).catch(($, e, next) => next(e)) // a queue failure must neither lose nor duplicate the prompt
 
-  // Движок забрал промпт из очереди: в текущий ход (вложение queued_command)
-  // или новым ходом (строка промпта) — убираем его бублик.
+  // The engine took a prompt from the queue: into the current turn (a queued_command attachment)
+  // or as a new turn (a prompt row): remove its bubble.
   on('session.append', async ($, e, next) => {
     const result = await next(e)
     const m = e.message
@@ -334,15 +334,15 @@ export const register: Register = on => {
     return result
   }).catch(($, e, next) => next(e))
 
-  // Ход закончился: всё, что ждало, либо уже забрано, либо ↑ вернул обратно в поле ввода
-  // (popAll — его не видно ни в одном событии). Чистим, чтобы не висели призраки.
+  // The turn is over: everything that waited was either taken, or ↑ put it back into the input
+  // (popAll, which no event shows). Clear it so no ghosts are left hanging.
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     if (!e.agentId) await update($, queued, () => [])
     return result
   }).catch(($, e, next) => next(e))
 
-  // ── Скруглённая рамка вокруг сообщений Claude ───────────────────────────
+  // ── A rounded border around Claude's messages ───────────────────────────
   on('ui.render', { component: 'AssistantMessage' }, ($, e, next) => {
     const text = e.props.text
     if (!text || !text.trim()) {
@@ -367,7 +367,7 @@ export const register: Register = on => {
     )
   })
 
-  // ── Скруглённая рамка вокруг твоих сообщений ────────────────────────────
+  // ── A rounded border around your messages ───────────────────────────────
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
     if (e.props.origin.kind !== 'composer') {
       return next(e)
@@ -379,8 +379,8 @@ export const register: Register = on => {
 
     const { Box, Text } = $.ui.resolve(e)
 
-    // Превью сообщения в очереди: его уже показывает бублик ◇ queued внизу, дубль прячем.
-    // Когда движок заберёт сообщение, очередь опустеет и строка перерисуется бубликом.
+    // A queued message's preview: the ◇ queued bubble below already shows it, so hide the duplicate.
+    // Once the engine takes the message, the queue empties and the row redraws as a bubble.
     const waiting = (await read($, queued)) ?? []
     if (waiting.some(q => q.text === text.trim())) {
       return <Box />
@@ -399,7 +399,7 @@ export const register: Register = on => {
     )
   })
 
-  // ── «Worked for …» — в свой бублик (ширина как у сообщений) ──────────────
+  // ── "Worked for …" in a bubble of its own (as wide as messages) ─────────
   on('ui.render', { component: 'TurnDuration' }, ($, e, next) => {
     const { Box, Text } = $.ui.resolve(e)
     const label = `${e.props.word} for ${fmtDuration(e.props.durationMs)} · done ${clockLabel()}`
@@ -415,7 +415,7 @@ export const register: Register = on => {
     )
   })
 
-  // ── «Ran … shell command» (группа вызовов) — в свой бублик ──────────────
+  // ── "Ran … shell command" (a group of calls) in a bubble of its own ─────
   on('ui.render', { component: 'ToolGroup' }, ($, e, next) => {
     const { Box, Text } = $.ui.resolve(e)
     const calls = e.props.calls || []
@@ -437,7 +437,7 @@ export const register: Register = on => {
     )
   })
 
-  // ── Статус-бублик сверху справа: весь statusbar целиком ─────────────────
+  // ── The status bubble: the whole status bar ─────────────────────────────
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const { Box, Text } = $.ui.resolve(e)
 
@@ -470,10 +470,10 @@ export const register: Register = on => {
         if (kind === 'five_hour') resets = resetsLabel(rl.resetsAt)
       }
     } catch {
-      // оставляем пустым
+      // left empty
     }
 
-    // Собираем строку статусбара сегментами (как " | " в statusline).
+    // Build the status bar line from segments (like " | " in the statusline).
     const row: RenderChildren[] = []
     const sep = (k: string) => row.push(<Text key={k}> | </Text>)
 
@@ -512,11 +512,11 @@ export const register: Register = on => {
     }
 
     if (!row.length) {
-      row.push(<Text key="idle">готов печатать</Text>)
+      row.push(<Text key="idle">ready to type</Text>)
     }
 
-    // Очередь справа: по строке на сообщение, переносы схлопнуты, длинное обрезается «…».
-    // Стопка растёт вверх: первое в очереди — внизу, у строки статуса; новые ложатся сверху.
+    // The queue on the right: a line per message, newlines collapsed, long ones cut with "…".
+    // The stack grows upward: the first in the queue is at the bottom, by the status line; new ones go on top.
     const waiting = (await read($, queued)) ?? []
     const queue = waiting
       .map((q, i) => (
@@ -526,8 +526,8 @@ export const register: Register = on => {
       ))
       .reverse()
 
-    // Статус-панель на всю ширину (одна строка, текст слева). Очередь — отдельный бублик
-    // справа; оба прижаты к низу, поэтому вверх растёт только бублик очереди.
+    // The status panel spans the full width (one line, text on the left). The queue is a separate bubble
+    // on the right; both sit at the bottom, so only the queue bubble grows upward.
     return (
       <Box flexGrow={1} alignItems="flex-end" marginRight={1}>
         <Box flexGrow={1} flexShrink={0} borderStyle="round" borderColor={CLOUD_ACCENT} paddingX={2}>
