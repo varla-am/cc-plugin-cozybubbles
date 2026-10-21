@@ -16,6 +16,7 @@ const CLOUD_ACCENT = '#43D9C7' // рамка статус-бублика
 const SERVICE_ACCENT = '#5A6472' // служебные бублики (Worked for…, Ran … shell)
 const CODE_BORDER = '#3A404B' // рамка блока кода
 const CODE_BG = '#16181D' // фон блока кода: чуть темнее тёмного терминала
+const IMAGE_ACCENT = '#F0A6CA' // [Image #N] в твоих сообщениях: нажал — открылась картинка
 
 // Иконки подписей (текстовые глифы, не эмодзи; у шестерёнки VS15 — текстовый стиль).
 const ICON_CLAUDE = '✳'
@@ -162,9 +163,87 @@ function mentions(content: unknown, text: string): boolean {
   return needle.length > 0 && JSON.stringify(content ?? '').includes(needle)
 }
 
+// Плейсхолдер вставленной картинки в твоём сообщении: [Image #57]
+const IMAGE_REF = /\[Image #(\d+)\]/g
+
+// Где лежит картинка #N: движок пишет её путь в историю как [Image: source: …/images/57.png].
+// После /compact старые строки уходят в сводку — тогда ищем N.png в той же папке, что и любая другая.
+async function imagePath($: Engine, n: string): Promise<string | undefined> {
+  const history = JSON.stringify(await $.session.messages({ as: 'api' }))
+  const paths = [...history.matchAll(/\[Image: source: ([^\]"]+?\.\w+)\]/g)].map(m => m[1] ?? '')
+  const exact = paths.find(p => new RegExp(`[/\\\\]${n}\\.\\w+$`).test(p))
+  if (exact) return exact
+  // Только папка вставленных картинок (…/images/), не файл, перетащенный из другой программы
+  const dir = paths.find(p => /[/\\]images[/\\][^/\\]+$/.test(p))?.replace(/[/\\][^/\\]+$/, '')
+  return dir ? `${dir}/${n}.png` : undefined
+}
+
+// Открыть файл программой по умолчанию: Просмотр на macOS, xdg-open на Linux, start на Windows
+async function openFile($: Engine, path: string): Promise<boolean> {
+  const uname = await $.process.run(['uname']).catch(() => undefined)
+  const argv = !uname
+    ? ['cmd', '/c', 'start', '', path]
+    : uname.stdout.startsWith('Darwin')
+      ? ['open', path]
+      : ['xdg-open', path]
+  const r = await $.process.run(argv).catch(() => undefined)
+  return r?.exitCode === 0
+}
+
+async function openImage($: Engine, n: string) {
+  const path = await imagePath($, n)
+  if (!path || !(await $.fs.exists(path))) {
+    $.ui.toast(`Картинки #${n} уже нет: временные файлы стираются при перезагрузке`)
+    return
+  }
+  if (!(await openFile($, path))) $.ui.toast(`Не удалось открыть ${path}`)
+}
+
+// Markdown, в котором строки с [Image #N] собраны из текста и кнопок: нажал — картинка открылась.
+// Такие строки рисуются без markdown-разметки; обычно в них и нет ничего, кроме слов.
+function markdownWithImages($: Engine, e: RenderInput, text: string, key: string) {
+  const { Box, Text, Markdown, Button } = $.ui.resolve(e)
+  const out: RenderChildren[] = []
+  let prose: string[] = []
+  const flush = () => {
+    if (prose.join('').trim()) out.push(<Markdown key={`${key}-${out.length}`} text={prose.join('\n')} />)
+    prose = []
+  }
+  for (const line of text.split('\n')) {
+    if (!line.match(IMAGE_REF)) {
+      prose.push(line)
+      continue
+    }
+    flush()
+    const parts: RenderChildren[] = []
+    let at = 0
+    for (const m of line.matchAll(IMAGE_REF)) {
+      const n = m[1] ?? ''
+      const before = line.slice(at, m.index)
+      if (before) parts.push(<Text key={`t${parts.length}`}>{before}</Text>)
+      parts.push(
+        <Button key={`img${parts.length}`} plain label={m[0]} onPress={() => openImage($, n)}>
+          <Text color={IMAGE_ACCENT} bold>
+            {m[0]}
+          </Text>
+        </Button>,
+      )
+      at = (m.index ?? 0) + m[0].length
+    }
+    if (at < line.length) parts.push(<Text key={`t${parts.length}`}>{line.slice(at)}</Text>)
+    out.push(
+      <Box key={`${key}-${out.length}`} flexDirection="row" flexWrap="wrap">
+        {parts}
+      </Box>,
+    )
+  }
+  flush()
+  return out
+}
+
 // Текст сообщения: markdown, а блоки кода ```lang … ``` — своим бубликом с кнопкой Copy.
-// Общий для сообщений Claude и твоих.
-function fencedBody($: Engine, e: RenderInput, text: string, width: number) {
+// Общий для сообщений Claude и твоих; в твоих [Image #N] ещё и нажимаются.
+function fencedBody($: Engine, e: RenderInput, text: string, width: number, images = false) {
   const { Box, Text, Markdown, Code, Button } = $.ui.resolve(e)
 
   // Блок кода — свой бублик внутри бублика, как в Claude Desktop:
@@ -175,7 +254,13 @@ function fencedBody($: Engine, e: RenderInput, text: string, width: number) {
 
   return splitFences(text).map((s, i) =>
     s.kind === 'md' ? (
-      <Markdown key={`md${i}`} text={s.text} />
+      images ? (
+        <Box key={`md${i}`} flexDirection="column">
+          {markdownWithImages($, e, s.text, `md${i}`)}
+        </Box>
+      ) : (
+        <Markdown key={`md${i}`} text={s.text} />
+      )
     ) : (
       <Box
         key={`code${i}`}
@@ -308,7 +393,7 @@ export const register: Register = on => {
           {` ${ICON_USER} user`}
         </Text>
         <Box flexDirection="column" borderStyle="round" borderColor={USER_ACCENT} paddingX={1}>
-          {fencedBody($, e, text, width)}
+          {fencedBody($, e, text, width, true)}
         </Box>
       </Box>
     )
