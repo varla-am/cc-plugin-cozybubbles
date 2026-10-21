@@ -1,7 +1,10 @@
 import { atom, read, update } from 'claude-code'
-import type { Register, RenderChildren, RenderInput } from 'claude-code'
+import type { Hook, Register, RenderChildren, RenderInput } from 'claude-code'
 
 import type { Queued } from '../types'
+
+// Движок ($) так, как его получает хук ui.render
+type Engine = Parameters<Hook<'ui.render'>>[0]
 
 // Промпты, набранные пока идёт ход: ждут в очереди, рисуются бубликами над статус-баром.
 const queued = atom({ plugin: 'cozy-bubbles', key: 'queued' } as const, [] as Queued[])
@@ -159,6 +162,53 @@ function mentions(content: unknown, text: string): boolean {
   return needle.length > 0 && JSON.stringify(content ?? '').includes(needle)
 }
 
+// Текст сообщения: markdown, а блоки кода ```lang … ``` — своим бубликом с кнопкой Copy.
+// Общий для сообщений Claude и твоих.
+function fencedBody($: Engine, e: RenderInput, text: string, width: number) {
+  const { Box, Text, Markdown, Code, Button } = $.ui.resolve(e)
+
+  // Блок кода — свой бублик внутри бублика, как в Claude Desktop:
+  // фон потемнее, сверху язык и кнопка «Copy».
+  // Линия под шапкой блока — от рамки до рамки: бублик минус рамка+отступы сообщения (4)
+  // и рамка самого блока (2). Отдельной нижней границы у Box нет, поэтому рисуем символами.
+  const rule = '─'.repeat(Math.max(0, width - 6))
+
+  return splitFences(text).map((s, i) =>
+    s.kind === 'md' ? (
+      <Markdown key={`md${i}`} text={s.text} />
+    ) : (
+      <Box
+        key={`code${i}`}
+        flexDirection="column"
+        marginY={1}
+        borderStyle="round"
+        borderColor={CODE_BORDER}
+        backgroundColor={CODE_BG}
+      >
+        <Box justifyContent="space-between" paddingX={1}>
+          <Text dimColor>{s.lang || 'code'}</Text>
+          <Button
+            key={`copy${i}`}
+            plain
+            dimColor
+            label="⧉ Copy"
+            onPress={async press => {
+              const r = await $.ui.copy({ text: s.source, surface: press.surface })
+              $.ui.toast(r.isCopied ? 'Код скопирован' : 'Не удалось скопировать')
+            }}
+          />
+        </Box>
+        <Text color={CODE_BORDER} wrap="truncate-end">
+          {rule}
+        </Text>
+        <Box paddingX={1}>
+          <Code source={s.source || ' '} language={s.lang || undefined} />
+        </Box>
+      </Box>
+    ),
+  )
+}
+
 export const register: Register = on => {
   // ── Очередь: Enter посреди хода кладёт промпт в очередь ─────────────────
   on('prompt.submit', async ($, e, next) => {
@@ -214,49 +264,9 @@ export const register: Register = on => {
       return next(e)
     }
 
-    const { Box, Text, Markdown, Code, Button } = $.ui.resolve(e)
-
-    // Блок кода — свой бублик внутри бублика, как в Claude Desktop:
-    // фон потемнее, сверху язык и кнопка «Copy».
+    const { Box, Text } = $.ui.resolve(e)
     const width = bubbleWidth(e, text)
-    // Линия под шапкой блока — от рамки до рамки: бублик минус рамка+отступы сообщения (4)
-    // и рамка самого блока (2). Отдельной нижней границы у Box нет, поэтому рисуем символами.
-    const rule = '─'.repeat(Math.max(0, width - 6))
-
-    const body = splitFences(text).map((s, i) =>
-      s.kind === 'md' ? (
-        <Markdown key={`md${i}`} text={s.text} />
-      ) : (
-        <Box
-          key={`code${i}`}
-          flexDirection="column"
-          marginY={1}
-          borderStyle="round"
-          borderColor={CODE_BORDER}
-          backgroundColor={CODE_BG}
-        >
-          <Box justifyContent="space-between" paddingX={1}>
-            <Text dimColor>{s.lang || 'code'}</Text>
-            <Button
-              key={`copy${i}`}
-              plain
-              dimColor
-              label="⧉ Copy"
-              onPress={async press => {
-                const r = await $.ui.copy({ text: s.source, surface: press.surface })
-                $.ui.toast(r.isCopied ? 'Код скопирован' : 'Не удалось скопировать')
-              }}
-            />
-          </Box>
-          <Text color={CODE_BORDER} wrap="truncate-end">
-            {rule}
-          </Text>
-          <Box paddingX={1}>
-            <Code source={s.source || ' '} language={s.lang || undefined} />
-          </Box>
-        </Box>
-      ),
-    )
+    const body = fencedBody($, e, text, width)
 
     return (
       <Box flexDirection="column" marginTop={1} width={width}>
@@ -282,7 +292,7 @@ export const register: Register = on => {
       return next(e)
     }
 
-    const { Box, Text, Markdown } = $.ui.resolve(e)
+    const { Box, Text } = $.ui.resolve(e)
 
     // Превью сообщения в очереди: его уже показывает бублик ◇ queued внизу, дубль прячем.
     // Когда движок заберёт сообщение, очередь опустеет и строка перерисуется бубликом.
@@ -291,13 +301,14 @@ export const register: Register = on => {
       return <Box />
     }
 
+    const width = bubbleWidth(e, text)
     return (
-      <Box flexDirection="column" marginTop={1} width={bubbleWidth(e, text)}>
+      <Box flexDirection="column" marginTop={1} width={width}>
         <Text color={USER_ACCENT} bold>
           {` ${ICON_USER} user`}
         </Text>
-        <Box borderStyle="round" borderColor={USER_ACCENT} paddingX={1}>
-          <Markdown text={text} />
+        <Box flexDirection="column" borderStyle="round" borderColor={USER_ACCENT} paddingX={1}>
+          {fencedBody($, e, text, width)}
         </Box>
       </Box>
     )
