@@ -20,3 +20,17 @@
 <p align="center">
   <img src="https://github.com/user-attachments/assets/b97d4ee6-cf97-4af5-b060-3d7473dc3f36" width="368" alt="A code block with a Copy button">
 </p>
+
+### Installation
+#### In claude code session:
+**_Run_**:
+```text
+/plugin install cozy-bubbles --marketplace varla-am/cc-plugin-cozybubbles
+```
+#### Outside claude code session:
+**_Run_**:
+```sh
+claude plugin install cozy-bubbles --marketplace varla-am/cc-plugin-cozybubbles
+```
+### License
+**_MIT_**
