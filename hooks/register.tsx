@@ -180,12 +180,13 @@ async function imagePath($: Engine, n: string): Promise<string | undefined> {
 
 // Open a file with the default app: Preview on macOS, xdg-open on Linux, start on Windows
 async function openFile($: Engine, path: string): Promise<boolean> {
-  const uname = await $.process.run(['uname']).catch(() => undefined)
-  const argv = !uname
-    ? ['cmd', '/c', 'start', '', path]
-    : uname.stdout.startsWith('Darwin')
-      ? ['open', path]
-      : ['xdg-open', path]
+  // No uname at all is plain Windows; Git Bash and MSYS have one but answer MINGW…/MSYS…/CYGWIN…
+  const system = (await $.process.run(['uname']).catch(() => undefined))?.stdout.trim() ?? ''
+  const argv = system.startsWith('Darwin')
+    ? ['open', path]
+    : system.startsWith('Linux')
+      ? ['xdg-open', path]
+      : ['cmd', '/c', 'start', '', path]
   const r = await $.process.run(argv).catch(() => undefined)
   return r?.exitCode === 0
 }
