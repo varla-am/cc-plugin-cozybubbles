@@ -1,5 +1,12 @@
-# CozyBubbles
-## An plugin for Claude Code that adds cool bubbles to messages.
+<p align="center">
+  <img src=".claude-plugin/icon.png" width="160" alt="cozy-bubbles icon">
+</p>
+
+
+<h1 align="center">CozyBubbles</h1>
+
+<h1 align="center">An plugin for Claude Code, that puts messages in cool bubbles.</h1>
+
 ### Functions:
 - **Interface**: Messages from you, client and Claude is now in cool bubbles.
 <p align="center">
