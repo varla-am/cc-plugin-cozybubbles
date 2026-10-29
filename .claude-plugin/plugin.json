@@ -1,6 +1,6 @@
 {
   "name": "cozy-bubbles",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Rounded borders around messages, a colourful status bar and a prompt queue in bubbles",
   "author": { "name": "Varlaam" },
   "types": "./types/index.d.ts"

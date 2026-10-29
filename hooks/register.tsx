@@ -340,30 +340,31 @@ function inputText(tool: string, input: unknown): string {
 
 // ── Rows the terminal makes for `! shell` and /slash commands ──────────────
 
-type LocalRow = { title: string; color: string; text: string; code: boolean }
+// `clip`: long output is cut to a few lines (shell rows); a command's own output is shown whole
+type LocalRow = { title: string; color: string; text: string; clip: boolean }
 
 // The engine stores these rows as tagged text: <bash-input>…</bash-input>, <bash-stdout>…, <command-name>…
 function localRow(raw: string): LocalRow | undefined {
   const tag = (name: string) => raw.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1]?.trim()
   const bashIn = tag('bash-input')
-  if (bashIn !== undefined) return { title: '! shell', color: SHELL_ACCENT, text: `$ ${bashIn}`, code: true }
+  if (bashIn !== undefined) return { title: '! shell', color: SHELL_ACCENT, text: `$ ${bashIn}`, clip: true }
   const out = tag('bash-stdout')
   const err = tag('bash-stderr')
   if (out !== undefined || err !== undefined) {
-    return { title: '! output', color: SHELL_ACCENT, text: [out, err].filter(Boolean).join('\n') || '(no output)', code: true }
+    return { title: '! output', color: SHELL_ACCENT, text: [out, err].filter(Boolean).join('\n') || '(no output)', clip: true }
   }
   const name = tag('command-name')
   if (name !== undefined) {
     const args = tag('command-args')
-    return { title: '/ command', color: COMMAND_ACCENT, text: args ? `${name} ${args}` : name, code: true }
+    return { title: '/ command', color: COMMAND_ACCENT, text: args ? `${name} ${args}` : name, clip: true }
   }
   const stdout = tag('local-command-stdout')
-  if (stdout !== undefined) return { title: '/ output', color: COMMAND_ACCENT, text: stdout || '(no output)', code: false }
+  if (stdout !== undefined) return { title: '/ output', color: COMMAND_ACCENT, text: stdout || '(no output)', clip: false }
   return undefined
 }
 
 function localBubble($: Engine, e: RenderInput, row: LocalRow, errored = false) {
-  const { Box, Text, Markdown } = $.ui.resolve(e)
+  const { Box, Text } = $.ui.resolve(e)
   const color = errored ? RED : row.color
   return (
     <Box flexDirection="column" marginTop={1} width={bubbleWidth(e, row.text)}>
@@ -371,7 +372,7 @@ function localBubble($: Engine, e: RenderInput, row: LocalRow, errored = false) 
         {` ${row.title}`}
       </Text>
       <Box flexDirection="column" borderStyle="round" borderColor={color} paddingX={1}>
-        {row.code ? <Text>{clip(row.text, 20, bubbleWidth(e, row.text) - 4)}</Text> : <Markdown text={row.text} />}
+        <Text>{row.clip ? clip(row.text, 20, bubbleWidth(e, row.text) - 4) : row.text}</Text>
       </Box>
     </Box>
   )
@@ -523,7 +524,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'CommandOutput' }, ($, e, next) => {
     const text = (e.props.text ?? '').trim()
     if (!text) return next(e)
-    const row = localRow(text) ?? { title: `/ ${e.props.command}`, color: COMMAND_ACCENT, text, code: false }
+    const row = localRow(text) ?? { title: `/ ${e.props.command}`, color: COMMAND_ACCENT, text, clip: false }
     return localBubble($, e, row, e.props.isErrored)
   })
 
