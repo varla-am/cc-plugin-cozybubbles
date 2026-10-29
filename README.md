@@ -15,6 +15,7 @@
 </p>
 
 - **Images:** click an image you pasted, and it opens in Preview.
+- **Client details:** click the `⚙︎ Client` header of a bubble to unfold it. A tool group shows each call's command or input, its status and output; "Worked for…" shows the exact duration, model, context tokens, limits and folder.
 - **Code boxes:** when you or Claude write a code block, it looks like this:
 
 <p align="center">
