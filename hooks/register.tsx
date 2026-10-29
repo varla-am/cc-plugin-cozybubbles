@@ -9,6 +9,9 @@ type Engine = Parameters<Hook<'ui.render'>>[0]
 // Prompts typed while a turn is running: they wait in the queue, drawn as bubbles above the status bar.
 const queued = atom({ plugin: 'cozy-bubbles', key: 'queued' } as const, [] as Queued[])
 
+// Client bubbles that are unfolded (press the header to toggle): keys from detailKey().
+const opened = atom({ plugin: 'cozy-bubbles', key: 'opened' } as const, [] as string[])
+
 // Border palette: one line per colour.
 const CLAUDE_ACCENT = '#43D9C7' // Claude's message border
 const USER_ACCENT = '#8A7FF0' // your message border
@@ -295,6 +298,78 @@ function fencedBody($: Engine, e: RenderInput, text: string, width: number, imag
   )
 }
 
+// ── Client bubble details ────────────────────────────────────────────────
+
+// Cut a long text to a few lines: the rest is replaced with "… N more lines"
+function clip(text: string, maxLines: number, maxCols: number): string {
+  const lines = text.replace(/\s+$/, '').split('\n')
+  const cut = lines.slice(0, maxLines).map(l => (l.length > maxCols ? `${l.slice(0, maxCols - 1)}…` : l))
+  if (lines.length > maxLines) cut.push(`… ${lines.length - maxLines} more lines`)
+  return cut.join('\n')
+}
+
+// A tool's output as text: a string as is, {stdout, stderr} joined, anything else as JSON
+function outputText(out: unknown): string {
+  if (out == null) return ''
+  if (typeof out === 'string') return out
+  if (typeof out === 'object') {
+    const o = out as Record<string, unknown>
+    if (typeof o.stdout === 'string' || typeof o.stderr === 'string') {
+      return [o.stdout, o.stderr].filter(x => typeof x === 'string' && x.trim()).join('\n')
+    }
+  }
+  try {
+    return JSON.stringify(out, null, 2) ?? ''
+  } catch {
+    return String(out)
+  }
+}
+
+// What a call was asked to do, in one block: Bash shows the command, others their input
+function inputText(tool: string, input: unknown): string {
+  const o = (input ?? {}) as Record<string, unknown>
+  if (tool === 'Bash' && typeof o.command === 'string') return `$ ${o.command}`
+  try {
+    return JSON.stringify(input, null, 2) ?? ''
+  } catch {
+    return String(input)
+  }
+}
+
+// A Client bubble: a header you can press to unfold the details under the label
+function clientBubble(
+  $: Engine,
+  e: RenderInput,
+  key: string,
+  isOpen: boolean,
+  label: string,
+  details: RenderChildren[],
+) {
+  const { Box, Text, Button } = $.ui.resolve(e)
+  return (
+    <Box flexDirection="column" marginTop={1} width={bubbleWidth(e)}>
+      <Button
+        plain
+        label={`Client ${isOpen ? 'hide' : 'show'} details`}
+        onPress={() =>
+          update($, opened, o => {
+            const list = o ?? []
+            return list.includes(key) ? list.filter(k => k !== key) : [...list, key]
+          })
+        }
+      >
+        <Text color={SERVICE_ACCENT} bold>
+          {` ${ICON_CLIENT} Client ${isOpen ? '▾' : '▸'}`}
+        </Text>
+      </Button>
+      <Box flexDirection="column" borderStyle="round" borderColor={SERVICE_ACCENT} paddingX={1}>
+        <Text color={SERVICE_ACCENT}>{label}</Text>
+        {isOpen ? details : null}
+      </Box>
+    </Box>
+  )
+}
+
 export const register: Register = on => {
   // ── Queue: Enter in the middle of a turn queues the prompt ─────────────────
   on('prompt.submit', async ($, e, next) => {
@@ -400,24 +475,45 @@ export const register: Register = on => {
     )
   })
 
-  // ── "Worked for …" in a bubble of its own (as wide as messages) ─────────
-  on('ui.render', { component: 'TurnDuration' }, ($, e, next) => {
-    const { Box, Text } = $.ui.resolve(e)
+  // ── "Worked for …" in a bubble of its own; press the header for the details ─
+  on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
+    const { Text } = $.ui.resolve(e)
+    const key = `t:${e.props.word}:${e.props.durationMs}`
+    const isOpen = ((await read($, opened)) ?? []).includes(key)
     const label = `${e.props.word} for ${fmtDuration(e.props.durationMs)} · done ${clockLabel()}`
-    return (
-      <Box flexDirection="column" marginTop={1} width={bubbleWidth(e)}>
-        <Text color={SERVICE_ACCENT} bold>
-          {` ${ICON_CLIENT} Client`}
-        </Text>
-        <Box borderStyle="round" borderColor={SERVICE_ACCENT} paddingX={1}>
-          <Text color={SERVICE_ACCENT}>{label}</Text>
-        </Box>
-      </Box>
-    )
+
+    const details: RenderChildren[] = []
+    if (isOpen) {
+      const row = (k: string, name: string, value: string) =>
+        details.push(
+          <Text key={k} dimColor>
+            {`${name.padEnd(9)}${value}`}
+          </Text>,
+        )
+      row('d', 'duration', `${fmtDuration(e.props.durationMs)} (${Math.round(e.props.durationMs)} ms)`)
+      try {
+        const model = (await $.session.model()) || ''
+        if (model) row('m', 'model', `${prettyModel(model)} (${model})`)
+      } catch {}
+      try {
+        const usage = await $.session.usage()
+        const tokens = usage.context?.tokens ?? 0
+        if (tokens > 0) row('t', 'context', `${groupThousands(tokens)} tokens now`)
+        for (const rl of usage.rateLimits || []) {
+          const at = resetsLabel(rl.resetsAt)
+          row(`r${rl.kind}`, rl.kind === 'five_hour' ? '5h limit' : rl.kind === 'seven_day' ? '7d limit' : rl.kind, `${Math.round(rl.percentUsed)}% used${at ? `, resets ${at}` : ''}`)
+        }
+      } catch {}
+      try {
+        const cwd = await $.session.cwd()
+        if (cwd) row('c', 'dir', cwd)
+      } catch {}
+    }
+    return clientBubble($, e, key, isOpen, label, details)
   })
 
-  // ── "Ran … shell command" (a group of calls) in a bubble of its own ─────
-  on('ui.render', { component: 'ToolGroup' }, ($, e, next) => {
+  // ── "Ran … shell command" (a group of calls) in a bubble of its own; press the header for each call ─
+  on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
     const { Box, Text } = $.ui.resolve(e)
     const calls = e.props.calls || []
     const n = calls.length
@@ -426,16 +522,27 @@ export const register: Register = on => {
       tools.length === 1
         ? `Ran ${n} ${tools[0]} call${n === 1 ? '' : 's'}`
         : `Ran ${n} tool calls (${tools.join(', ')})`
-    return (
-      <Box flexDirection="column" marginTop={1} width={bubbleWidth(e)}>
-        <Text color={SERVICE_ACCENT} bold>
-          {` ${ICON_CLIENT} Client`}
-        </Text>
-        <Box borderStyle="round" borderColor={SERVICE_ACCENT} paddingX={1}>
-          <Text color={SERVICE_ACCENT}>{label}</Text>
-        </Box>
-      </Box>
-    )
+    const first = calls[0]
+    const key = `g:${first?.tool_use_id ?? `${tools.join('+')}:${inputText(first?.tool ?? '', first?.input).slice(0, 60)}`}`
+    const isOpen = ((await read($, opened)) ?? []).includes(key)
+
+    const inner = bubbleWidth(e) - 4
+    const details: RenderChildren[] = isOpen
+      ? calls.map((c, i) => {
+          const state = c.isRunning ? 'running…' : c.isInterrupted ? 'interrupted' : c.isErrored ? 'failed' : 'ok'
+          const out = outputText(c.output)
+          return (
+            <Box key={`call${i}`} flexDirection="column" marginTop={1}>
+              <Text bold color={c.isErrored ? RED : undefined}>
+                {`${c.tool} · ${state}`}
+              </Text>
+              <Text>{clip(inputText(c.tool, c.input), 8, inner)}</Text>
+              {out.trim() ? <Text dimColor>{clip(out, 12, inner)}</Text> : null}
+            </Box>
+          )
+        })
+      : []
+    return clientBubble($, e, key, isOpen, label, details)
   })
 
   // ── The status bubble: the whole status bar ─────────────────────────────
