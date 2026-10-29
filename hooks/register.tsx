@@ -19,6 +19,8 @@ const CLOUD_ACCENT = '#43D9C7' // status bubble border
 const SERVICE_ACCENT = '#5A6472' // service bubbles (Worked for…, Ran … shell)
 const CODE_BORDER = '#3A404B' // code block border
 const CODE_BG = '#16181D' // code block background: a little darker than a dark terminal
+const SHELL_ACCENT = '#E5B567' // `! command` you ran yourself and its output
+const COMMAND_ACCENT = '#7FB4F0' // /slash commands and what they printed
 const IMAGE_ACCENT = '#F0A6CA' // [Image #N] in your messages: press it to open the image
 
 // Label icons (text glyphs, not emoji; the gear carries VS15 for text style).
@@ -336,6 +338,45 @@ function inputText(tool: string, input: unknown): string {
   }
 }
 
+// ── Rows the terminal makes for `! shell` and /slash commands ──────────────
+
+type LocalRow = { title: string; color: string; text: string; code: boolean }
+
+// The engine stores these rows as tagged text: <bash-input>…</bash-input>, <bash-stdout>…, <command-name>…
+function localRow(raw: string): LocalRow | undefined {
+  const tag = (name: string) => raw.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1]?.trim()
+  const bashIn = tag('bash-input')
+  if (bashIn !== undefined) return { title: '! shell', color: SHELL_ACCENT, text: `$ ${bashIn}`, code: true }
+  const out = tag('bash-stdout')
+  const err = tag('bash-stderr')
+  if (out !== undefined || err !== undefined) {
+    return { title: '! output', color: SHELL_ACCENT, text: [out, err].filter(Boolean).join('\n') || '(no output)', code: true }
+  }
+  const name = tag('command-name')
+  if (name !== undefined) {
+    const args = tag('command-args')
+    return { title: '/ command', color: COMMAND_ACCENT, text: args ? `${name} ${args}` : name, code: true }
+  }
+  const stdout = tag('local-command-stdout')
+  if (stdout !== undefined) return { title: '/ output', color: COMMAND_ACCENT, text: stdout || '(no output)', code: false }
+  return undefined
+}
+
+function localBubble($: Engine, e: RenderInput, row: LocalRow, errored = false) {
+  const { Box, Text, Markdown } = $.ui.resolve(e)
+  const color = errored ? RED : row.color
+  return (
+    <Box flexDirection="column" marginTop={1} width={bubbleWidth(e, row.text)}>
+      <Text color={color} bold>
+        {` ${row.title}`}
+      </Text>
+      <Box flexDirection="column" borderStyle="round" borderColor={color} paddingX={1}>
+        {row.code ? <Text>{clip(row.text, 20, bubbleWidth(e, row.text) - 4)}</Text> : <Markdown text={row.text} />}
+      </Box>
+    </Box>
+  )
+}
+
 // A Client bubble: a header you can press to unfold the details under the label
 function clientBubble(
   $: Engine,
@@ -445,6 +486,9 @@ export const register: Register = on => {
 
   // ── A rounded border around your messages ───────────────────────────────
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
+    // `! command`, /slash commands and their output: bubbles of their own
+    const local = localRow(e.props.text ?? '')
+    if (local) return localBubble($, e, local)
     if (e.props.origin.kind !== 'composer') {
       return next(e)
     }
@@ -473,6 +517,14 @@ export const register: Register = on => {
         </Box>
       </Box>
     )
+  })
+
+  // ── What a /slash command printed ───────────────────────────────────────
+  on('ui.render', { component: 'CommandOutput' }, ($, e, next) => {
+    const text = (e.props.text ?? '').trim()
+    if (!text) return next(e)
+    const row = localRow(text) ?? { title: `/ ${e.props.command}`, color: COMMAND_ACCENT, text, code: false }
+    return localBubble($, e, row, e.props.isErrored)
   })
 
   // ── "Worked for …" in a bubble of its own; press the header for the details ─

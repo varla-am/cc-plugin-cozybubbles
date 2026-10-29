@@ -16,6 +16,7 @@
 
 - **Images:** click an image you pasted, and it opens in Preview.
 - **Client details:** click the `⚙︎ Client` header of a bubble to unfold it. A tool group shows each call's command or input, its status and output; "Worked for…" shows the exact duration, model, context tokens, limits and folder.
+- **Shell and slash commands:** your `! commands`, `/commands` and what they print are in bubbles too (yellow for shell, blue for slash commands).
 - **Code boxes:** when you or Claude write a code block, it looks like this:
 
 <p align="center">
